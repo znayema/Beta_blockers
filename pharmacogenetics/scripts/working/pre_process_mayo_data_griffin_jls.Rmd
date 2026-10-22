@@ -1,0 +1,90 @@
+---
+title: "Mayo Recoding"
+author: "Griffin Tibbitts"
+date: '2023-06-27'
+output: html_document
+---
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+# Lab BMD sample results
+dxa <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenetics/data/cleaned_dxa.csv')
+
+# Imputed BMD sample results
+imp <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenetics/data/cleaned_imputed_dxa.csv')
+
+# Remove EMmeans standard errors, they are used by other scripts
+imp <- imp %>%
+  dplyr::select(-matches('.*pred_se'))
+
+# Lab bone turnover marker results from blood
+lab <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenetics/data/cleaned_lab.csv')
+
+# Imputed bone turnover marker results from blood
+ilab <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenetics/data/cleaned_imputed_lab.csv')
+
+# Remove EMmeans standard errors, they are used by other scripts
+ilab <- ilab %>%
+  dplyr::select(-matches('.*pred_se'))
+
+# Merge imputed and non-imputed data.
+# This step is done here because the imputed files are used to create 
+# EMmeans plots by another script
+all_dxa_merged <- rbind(dxa, imp)
+all_lab_merged <- rbind(lab, ilab)
+
+head(all_dxa_merged)
+head(all_lab_merged)
+```
+
+
+```{r}
+parse_data_by_drug <- function(df_in, effect_estimate, standard_error, p_val, Drug_Name, Baseline) {
+  
+    # Calculate bounds of confidence intervals
+  df_in %>%
+    
+    # filter for p_values significant to the specified drug and rename generic p_value column to 'p_value' and round p_value to three decimal places
+    mutate(p_value = df_in[[p_val]]) %>% mutate(p_value = round(p_value, 3)) %>%
+    
+    rename('Baseline' = Baseline, 'Value' = effect_estimate, 'Std.Error' = standard_error, 'p' = p_value) %>%
+
+    # Add column specifying the significant drug for merge
+    mutate(Drug = Drug_Name) %>%
+    
+    mutate(Value = Value/Baseline) %>%
+    
+    dplyr::select(N, rsid, ch37, Chromosome, Gene, EA, NEA, Sample, Drug, Value, Std.Error, p, Source)
+}
+# Separate BMD data by drug for which the effect was significant
+atenolol <- parse_data_by_drug(all_dxa_merged, 'SNP_AvsPl_coef', 'SNP_AvsPl_se', 'SNP_AvsPl_pval', 'Atenolol', 'Mean_BMD0')
+nebivolol <- parse_data_by_drug(all_dxa_merged, 'SNP_NvsPl_coef', 'SNP_NvsPl_se', 'SNP_NvsPl_pval', 'Nebivolol', 'Mean_BMD0')
+propranolol_40 <- parse_data_by_drug(all_dxa_merged, 'SNP_P40vsPl_coef', 'SNP_P40vsPl_se', 'SNP_P40vsPl_pval', 'Propranolol40', 'Mean_BMD0')
+propranolol_80 <- parse_data_by_drug(all_dxa_merged, 'SNP_P80vsPl_coef', 'SNP_P80vsPl_se', 'SNP_P80vsPl_pval', 'Propranolol80', 'Mean_BMD0')
+
+# Separate Lab data by drug for which the effect was significant
+atenolol_lab <- parse_data_by_drug(all_lab_merged, 'SNP_AvsPl_coef', 'SNP_AvsPl_se', 'SNP_AvsPl_pval', 'Atenolol', 'Mean_Lab0')
+nebivolol_lab <- parse_data_by_drug(all_lab_merged, 'SNP_NvsPl_coef', 'SNP_NvsPl_se', 'SNP_NvsPl_pval', 'Nebivolol', 'Mean_Lab0')
+propranolol_40_lab <- parse_data_by_drug(all_lab_merged, 'SNP_P40vsPl_coef', 'SNP_P40vsPl_se', 'SNP_P40vsPl_pval', 'Propranolol40', 'Mean_Lab0')
+propranolol_80_lab <- parse_data_by_drug(all_lab_merged, 'SNP_P80vsPl_coef', 'SNP_P80vsPl_se', 'SNP_P80vsPl_pval', 'Propranolol80', 'Mean_Lab0')
+
+# Re-merge into large data frames containing only results that were significant and the drug they
+# were significant for.
+dxa_by_drug <- bind_rows(atenolol, nebivolol, propranolol_40, propranolol_80)
+lab_by_drug <- bind_rows(atenolol_lab, nebivolol_lab, propranolol_40_lab, propranolol_80_lab)
+
+dxa_by_drug
+lab_by_drug
+```
+```{r}
+# Write intermediate files
+write.csv(dxa_by_drug, '/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/processedBMD.csv')
+write.csv(lab_by_drug, '/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/processedLAB.csv')
+```
+

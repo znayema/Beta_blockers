@@ -1,0 +1,95 @@
+---
+title: "Clean DXA Data"
+author: "Griffin Tibbitts"
+date: '2023-03-28'
+output: html_document
+description: Cleaning the non-imputed dxa data and making sure it aligns with the framingham reference and alternate alleles
+---
+
+setwd("/work/larylab/Jennifer/beta_blockers/")
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+library(tidyr)
+```
+
+```{r}
+# Load in dxa file
+dxa = read.csv(file="/work/larylab/Mayo/data/HDAC_dxa_fit5.csv",stringsAsFactors = F)
+idxa = read.csv(file="/work/larylab/Mayo/data/imp_dxa_fit5.csv",stringsAsFactors = F)
+lookup = read.csv('/work/larylab/Griffin_Stuff/Griffin_Mayo/data/mayo_fram_snp_master_list.csv') %>%
+  separate(ch38, c('Chromosome', 'ch38')) %>%
+  mutate(Chromosome = as.numeric(substring(Chromosome, 4)))
+head(dxa)
+```
+```{r}
+cleaned_dxa <- dxa %>%
+  
+  # Deal with GSA label
+  mutate(snp = case_when(startsWith(snp, 'GSA') ~ gsub('GSA.', '', snp),
+                         TRUE ~ snp)) %>%
+  
+  # Split snp into rsid and effect allele columns
+  separate(snp, c('rsid', 'EA')) %>%
+
+  
+  # Rename BMD Sites to be more descriptive
+  rename(Sample = dxa_var) %>%
+  mutate(Sample = recode(Sample, bodybmd = 'Total Body', fnbmd = 'Femoral Neck',
+                           fhipbmd = 'Femoral Hip', sl1l4bmd = 'Lumbar Spine', 
+                           drubmd = 'Ultradistal Radius', dradbmd = 'Distal Radius'),
+         
+         # Non-effect allele is not listed here so rather than assuming leave it
+         # as NA
+         NEA = NA,
+         Source = 'dxa') %>%
+  
+  # Merge with lookup file to get positions
+  merge(lookup, by = 'rsid', all = T) %>%
+  filter(!is.na(Sample)) %>%
+  distinct() %>%
+  dplyr::select(-written.allele, -A1, -A2, -rsid.allele, -ch38.reference.allele, -ch38.alternate.allele, -X) %>%
+  
+  mutate(Chromosome = as.numeric(gsub('chr', '', Chromosome)))
+
+cleaned_dxa
+```
+
+```{r}
+cleaned_imp <- idxa %>%
+    
+    # Rename column names to be more human readable
+    rename(Sample = 'dxa_var') %>%
+    
+    # Separate snp naming convention into separate columns
+    separate(snp, c('Chromosome','ch38', 'EA', 'NEA')) %>%
+    
+    # Remove 'chr' from chromosome to match non-imputed and to be integer
+    mutate(Chromosome = as.numeric(gsub('chr', '', Chromosome))) %>%
+  
+    # Renaming BMD Sites to be more descriptive
+    mutate(Sample = recode(Sample, bodybmd = 'Total Body', fnbmd = 'Femoral Neck',
+                           fhipbmd = 'Femoral Hip', sl1l4bmd = 'Lumbar Spine', 
+                           drubmd = 'Ultradistal Radius', dradbmd = 'Distal Radius')) %>%
+
+  
+  # Merge with lookup file to get ch37 position and rsid
+    merge(lookup, by = c('ch38', 'Chromosome'), all = T) %>%
+    filter(!is.na(Sample)) %>%
+    distinct() %>%
+    dplyr::select(-written.allele, -rsid.allele, -A1, -A2, -ch38.reference.allele, -ch38.alternate.allele, -X) %>%
+    mutate(Source = 'imputed dxa')
+
+cleaned_imp
+```
+
+```{r}
+write.csv(cleaned_dxa,'/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/cleaned_dxa.csv')
+write.csv(cleaned_imp,'/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/cleaned_imputed_dxa.csv')
+```
+

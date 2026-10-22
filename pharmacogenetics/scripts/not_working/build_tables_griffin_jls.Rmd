@@ -1,0 +1,409 @@
+---
+title: "Pharmacogenomics Tables"
+author: "Griffin Tibbitts"
+date: '2023-06-29'
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(dplyr)
+library(gt)
+library(gtExtras)
+library(flextable)
+library(patchwork)
+```
+
+```{r}
+# Load in Mayo results
+mayo_bmd <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenetics/data/processedBMD.csv')
+mayo_lab <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenetics/data/processedLAB.csv')
+
+# Load in FHS results
+long_fhs <- read.csv('/work/larylab/Griffin_Stuff/Griffin_Framingham/results/Long_FN_AllSNPs_LMER_results_female.csv') %>%
+  filter(var == 'round(gt_DS):BBYes') %>%
+  
+  # Add N. For proof see FHS code
+  mutate(N = 1028)
+cs_fhs <- read.csv('/work/larylab/Griffin_Stuff/Griffin_Framingham/results/FULL_POWER_CS_FN_AllSNPs_LMER_results_female.csv') %>%
+  filter(var == 'round(gt_DS):BBYes') %>%
+  
+  # Add N. For proof see FHS code.
+  mutate(N = 841)
+```
+
+```{r}
+# Filter FHS results to just SNPs from Mayo, add NAs for the two SNPs that 
+# were in Mayo but not FHS.
+mayo_long_fhs <- long_fhs %>%
+  merge(distinct(select(mayo_bmd, ch37)), by.x = 'POS', by.y = 'ch37', all.y = T) %>%
+  mutate(Gene = case_when(POS == 115806232 ~ 'ADRB1',
+                         POS == 240224444 ~ 'HDAC4',
+                         TRUE~Gene)) %>%
+  #filter(p < 0.05) %>%
+  arrange(Gene, POS) %>%
+  rename(EA = ALT)
+
+mayo_cs_fhs <- cs_fhs %>%
+  merge(distinct(select(mayo_bmd, ch37)), by.x = 'POS', by.y = 'ch37', all.y = T) %>%
+  mutate(Gene = case_when(POS == 115806232 ~ 'ADRB1',
+                         POS == 240224444 ~ 'HDAC4',
+                         TRUE~Gene)) %>%
+  #filter(p < 0.05) %>%
+  arrange(Gene, POS) %>%
+  rename(EA = ALT)
+```
+
+```{r}
+arrange(filter(mayo_bmd, p < 0.05), Gene, ch37)
+
+arrange(filter(mayo_lab, p < 0.05), Gene, ch37)
+```
+```{r}
+write.csv(mayo_long_fhs, '/work/larylab/Jennifer/beta_blockers/pharmacogenomics/results/longitudinal_FHS_signif.csv')
+write.csv(mayo_cs_fhs, '/work/larylab/Jennifer/beta_blockers/pharmacogenomics/results/cross_sectional_FHS_signif.csv')
+```
+```{r}
+mayo_data <- filter(mayo_bmd, p < 0.05) %>%
+  rbind(filter(mayo_lab, Sample == 'ctx', p < 0.05))
+
+mayo_data
+```
+```{r}
+mayo_adrb1 <- mayo_data %>%
+  filter(Gene == 'ADRB1') %>% 
+  select(rsid, Gene, Chromosome,ch37, EA, NEA, N, Sample, Drug, Value, Std.Error, p) %>%
+  arrange(ch37)
+mayo_adrb1
+
+mayo_adrb2 <- mayo_data %>%
+  filter(Gene == 'ADRB2') %>%
+  select(rsid, Gene, Chromosome, ch37, EA, NEA, N, Sample, Drug, Value, Std.Error, p) %>%
+  arrange(ch37)
+
+mayo_hdac4 <- mayo_data %>%
+  filter(Gene == 'HDAC4') %>%
+  select(rsid, Gene, Chromosome, ch37, EA, NEA, N, Sample, Drug, Value, Std.Error, p) %>%
+  arrange(ch37)
+
+```
+```{r}
+adrb1 <- merge(mayo_adrb1, filter(mayo_cs_fhs, Gene == 'ADRB1'), by.x = 'ch37',by.y = 'POS', all = T) %>%
+  # Add confidence intervals to effect estimate
+  
+  mutate(
+    # Round and calculate 95% confidence intervals for mayo results
+    Value = paste0(round(Value, 3), ' (', round(Value - 1.96 * Std.Error, 3), ',', round(Value + 1.96 * Std.Error, 3), ')'),
+    
+  # Round and calculate 95% confidence intervals for FHS results
+  Estimate = paste0(round(Estimate, 3), ' (', round(Estimate - 1.96 * Std..Error, 3), ',', round(Estimate + 1.96 * Std..Error, 3), ')'),
+  p.y = round(p.y, 3))
+
+    # ADD LINKAGE DATA FOR ADRB1
+  # Linkage groups calculated from LDlink SNPclip tool https://ldlink.nih.gov/?tab=snpclip
+  # Settings: chr37, all European population Filtered for R squared of 0.80 and MAF 0.01. 
+  
+  #Previous SNP R squared obtained from
+  # LDmatrix using the same settings but reporting all R squared results for previous SNP.
+  
+  
+  # Groups are named arbitrarily. SNPs that are not in linkage are grouped "IND"
+  # For independent SNPs. 
+  
+  # We went back and forth on whether to report groups from SNPclip or just 
+  # R squared to previous SNP. I have included both as they have advantages and 
+  # Disadvantages. For example in ADRB2 the last four SNPs do not pass the R
+  # Squared threshhold of 0.8 however the results were observe for these snps are
+  # Highly correlated. Checking their adjacency R squareds we pairwise R2 
+  # Between -17 and -18 and -19 and -20 at 0.78 which is just under the threshhold
+
+adrb1 <- adrb1 %>%
+  mutate('Previous SNP R-Squared' = case_when(rsid == 'rs2050395' ~ 'start',
+                                              rsid == 'rs12414657' ~ '0.991',
+                                              rsid == 'rs1801252' ~ '1.0',
+                                              rsid == 'rs1801253' ~ '0.067',
+                                              rsid == 'rs1336315111' ~ '0.064'),
+         'Linkage Group' = case_when(rsid == 'rs2050395' ~ 'A',
+                                     rsid == 'rs12414657' ~ 'A',
+                                     rsid == 'rs1801252' ~ 'A',
+                                     rsid == 'rs1801253' ~ 'IND',
+                                     rsid == 'rs1336315111' ~ 'A'),
+         'R-Squared to Linkage Group Tag' = case_when(rsid == 'rs2050395' ~ '0.991',
+                                              rsid == 'rs12414657' ~ '1.0',
+                                              rsid == 'rs1801252' ~ 'Tag',
+                                              rsid == 'rs1801253' ~ 'IND',
+                                              rsid == 'rs1336315111' ~ '0.939')) %>%
+
+
+
+  # Recode into more descriptive headers
+  rename(Gene = Gene.x, 'Mayo EA' = EA.x, 'Mayo N' = N.x, 'Mayo Effect Estimate' = Value, 'Mayo p' = p.x, 
+         'FHS Effect Estimate' = Estimate, 'FHS p' = p.y, 'FHS EA' = EA.y, 'FHS N' = N.y) %>%
+  select(
+          # Genotype Data
+          'Linkage Group', 'R-Squared to Linkage Group Tag', 'Previous SNP R-Squared', rsid, Chromosome, ch37, Gene, 
+         
+         # Mayo
+         'Mayo N', 'Mayo EA', Sample, Drug, 'Mayo Effect Estimate', 'Mayo p', 
+         
+         #FHS
+         'FHS N', 'FHS EA', 'FHS Effect Estimate', 'FHS p')  %>%
+  mutate('FHS Effect Estimate' = case_when('FHS Effect Estimate' == 'NA (NA,NA)' ~ '',
+                                            TRUE ~ adrb1$'FHS Effect Estimate'),
+         ch37 = as.character(ch37),
+         'Mayo N' = as.character(adrb1$'Mayo N'),
+         'FHS N' = as.character(adrb1$'FHS N')) %>%
+  rename('Position' = ch37) %>%
+  select(-Gene, -Chromosome)
+```
+
+```{r}
+adrb2 <- merge(mayo_adrb2, filter(mayo_long_fhs, Gene == 'ADRB2'), by.x = 'ch37',by.y = 'POS', all = T) %>%
+  # Add confidence intervals to effect estimate
+  
+  mutate(
+    # Round and calculate 95% confidence intervals for mayo results
+    Value = paste0(round(Value, 3), ' (', round(Value - 1.96 * Std.Error, 3), ',', round(Value + 1.96 * Std.Error, 3), ')'),
+    
+  # Round and calculate 95% confidence intervals for FHS results
+  Estimate = paste0(round(Estimate, 3), ' (', round(Estimate - 1.96 * Std..Error, 3), ',', round(Estimate + 1.96 * Std..Error, 3), ')'),
+  p.y = round(p.y, 3)) %>%
+
+    # ADD LINKAGE DATA FOR ADRB2
+  # Linkage groups calculated from LDlink SNPclip tool https://ldlink.nih.gov/?tab=snpclip
+  # Settings: chr37, all European population Filtered for R squared of 0.80 and MAF 0.01. 
+  
+  #Previous SNP R squared obtained from
+  # LDmatrix using the same settings but reporting all R squared results for previous SNP.
+  
+  
+  # Groups are named arbitrarily. SNPs that are not in linkage are grouped "IND"
+  # For independent SNPs. 
+  
+  # We went back and forth on whether to report groups from SNPclip or just 
+  # R squared to previous SNP. I have included both as they have advantages and 
+  # Disadvantages. For example in ADRB2 the last four SNPs do not pass the R
+  # Squared threshhold of 0.8 however the results were observe for these snps are
+  # Highly correlated. Checking their adjacency R squareds we pairwise R2 
+  # Between -17 and -18 and -19 and -20 at 0.78 which is just under the threshhold
+
+  mutate('Previous SNP R-Squared' = case_when(rsid == 'rs2400707' ~ 'Start',
+                                     rsid == 'rs2053044' ~ '1.0',
+                                     rsid == 'rs1042711' ~ '0.414',
+                                     rsid == 'rs1801704' ~ '0.996',
+                                     rsid == 'rs1042714' ~ '0.430',
+                                     rsid == 'rs12654778' ~ '0.435',
+                                     rsid == 'rs1042713' ~ '0.441',
+                                     rsid == 'rs1042717' ~ '0.172',
+                                     rsid == 'rs1042718' ~ '0.784',
+                                     rsid == 'rs1042719' ~ '0.472',
+                                     rsid == 'rs1042720' ~ '0.781'),
+         
+         'Linkage Group' = case_when(rsid == 'rs2400707' ~ 'B',
+                                     rsid == 'rs2053044' ~ 'B',
+                                     rsid == 'rs1042711' ~ 'B',
+                                     rsid == 'rs1801704' ~ 'B',
+                                     rsid == 'rs1042714' ~ 'B',
+                                     rsid == 'rs12654778' ~ 'C',
+                                     rsid == 'rs1042713' ~ 'C',
+                                     rsid == 'rs1042717' ~ 'IND',
+                                     rsid == 'rs1042718' ~ 'IND',
+                                     rsid == 'rs1042719' ~ 'IND',
+                                     rsid == 'rs1042720' ~ 'IND'),
+         
+         'R-Squared to Linkage Group Tag' = case_when(rsid == 'rs2400707' ~ 'TAG',
+                                     rsid == 'rs2053044' ~ '1.0',
+                                     rsid == 'rs1042711' ~ '0.959',
+                                     rsid == 'rs1801704' ~ '0.963',
+                                     rsid == 'rs1042714' ~ '0.976',
+                                     rsid == 'rs12654778' ~ 'TAG',
+                                     rsid == 'rs1042713' ~ '0.9421',
+                                     rsid == 'rs1042717' ~ 'IND',
+                                     rsid == 'rs1042718' ~ 'IND',
+                                     rsid == 'rs1042719' ~ 'IND',
+                                     rsid == 'rs1042720' ~ 'IND')) %>%
+
+  # Recode into more descriptive headers
+  rename(Gene = Gene.x, 'Mayo EA' = EA.x, 'Mayo N' = N.x, 'Mayo Effect Estimate' = Value, 'Mayo p' = p.x, 
+         'FHS Effect Estimate' = Estimate, 'FHS p' = p.y, 'FHS EA' = EA.y, 'FHS N' = N.y) %>%
+  select(
+          # Genotype Data
+          'Linkage Group', 'R-Squared to Linkage Group Tag', 'Previous SNP R-Squared', rsid, Chromosome, ch37, Gene, 
+         
+         # Mayo
+         'Mayo N', 'Mayo EA', Sample, Drug, 'Mayo Effect Estimate', 'Mayo p', 
+         
+         #FHS
+         'FHS N', 'FHS EA', 'FHS Effect Estimate', 'FHS p') %>%
+  mutate('FHS Effect Estimate' = case_when('FHS Effect Estimate' == 'NA (NA,NA)' ~ '',
+                                            TRUE ~ adrb2$'FHS Effect Estimate'),
+         ch37 = as.character(ch37),
+         'Mayo N' = as.character(adrb2$'Mayo N'),
+         'FHS N' = as.character(adrb2$'FHS N')) %>%
+  rename('Position' = ch37) %>%
+  select(-Gene, -Chromosome) 
+
+adrb2 <- adrb2[!duplicated(adrb2[c('Position', 'Drug', 'Sample', 'Mayo Effect Estimate')]),]
+```
+
+```{r}
+hdac4 <- merge(mayo_hdac4, filter(mayo_cs_fhs, Gene == 'HDAC4'), by.x = 'ch37',by.y = 'POS', all = T) %>%
+  # Add confidence intervals to effect estimate
+  
+  mutate(
+    # Round and calculate 95% confidence intervals for mayo results
+    Value = paste0(round(Value, 3), ' (', round(Value - 1.96 * Std.Error, 3), ',', round(Value + 1.96 * Std.Error, 3), ')'),
+    
+  # Round and calculate 95% confidence intervals for FHS results
+  Estimate = paste0(round(Estimate, 3), ' (', round(Estimate - 1.96 * Std..Error, 3), ',', round(Estimate + 1.96 * Std..Error, 3), ')'),
+  p.y = round(p.y, 3)) %>%
+
+    # ADD LINKAGE DATA FOR HDAC4
+  # Linkage groups calculated from LDlink SNPclip tool https://ldlink.nih.gov/?tab=snpclip
+  # Settings: chr37, all European population Filtered for R squared of 0.80 and MAF 0.01. 
+  
+  #Previous SNP R squared obtained from
+  # LDmatrix using the same settings but reporting all R squared results for previous SNP.
+  
+  
+  # Groups are named arbitrarily. SNPs that are not in linkage are grouped "IND"
+  # For independent SNPs. 
+  
+  # We went back and forth on whether to report groups from SNPclip or just 
+  # R squared to previous SNP. I have included both as they have advantages and 
+  # Disadvantages. 
+
+  # HDAC4 shows the disadvantage of the previous SNP approach. None of the 
+  # Adjacent SNPs have any linkage, but the four SNPs are linked in pairs of two
+  # Which we can see when we look at the pairwise comparison and grouping from 
+  # SNPclip.
+
+  mutate('Previous SNP R-Squared' = case_when(rsid == 'rs35641250' ~ 'Start',
+                                     rsid == 'rs11124190' ~ '0.015',
+                                     rsid == 'rs4851969' ~ '0.015',
+                                     rsid == 'rs12623489' ~ '0.015'),
+         
+         'Linkage Group' = case_when(rsid == 'rs35641250' ~ 'D',
+                                     rsid == 'rs11124190' ~ 'D',
+                                     rsid == 'rs4851969' ~ 'E',
+                                     rsid == 'rs12623489' ~ 'E'),
+         
+         'R-Squared to Linkage Group Tag' = case_when(rsid == 'rs35641250' ~ 'TAG',
+                                     rsid == 'rs11124190' ~ '0.992',
+                                     rsid == 'rs4851969' ~ 'TAG',
+                                     rsid == 'rs12623489' ~ '1.0')) %>%
+
+  # Recode into more descriptive headers
+  rename(Gene = Gene.x, 'Mayo EA' = EA.x, 'Mayo N' = N.x, 'Mayo Effect Estimate' = Value, 'Mayo p' = p.x, 
+         'FHS Effect Estimate' = Estimate, 'FHS p' = p.y, 'FHS EA' = EA.y, 'FHS N' = N.y) %>%
+  select(
+          # Genotype Data
+          'Linkage Group', 'R-Squared to Linkage Group Tag', 'Previous SNP R-Squared', rsid, Chromosome, ch37, Gene, 
+         
+         # Mayo
+         'Mayo N', 'Mayo EA', Sample, Drug, 'Mayo Effect Estimate', 'Mayo p', 
+         
+         #FHS
+         'FHS N', 'FHS EA', 'FHS Effect Estimate', 'FHS p') %>%
+  
+  # HDAC4 had too many hits in framingham to efficiently label all of the SNPs
+  # with the specific limitations to working packages on Discovery.
+  # Merging on position fails to capture this so here we will simply filter
+  # to remove any framingham HDAC4 hits that were not in Mayo
+  filter(!is.na(rsid)) %>%
+  mutate('FHS Effect Estimate' = case_when('FHS Effect Estimate' == 'NA (NA,NA)' ~ '',
+                                            TRUE ~ hdac4$'FHS Effect Estimate'),
+         ch37 = as.character(ch37),
+         'Mayo N' = as.character(hdac4$'Mayo N'),
+         'FHS N' = as.character(hdac4$'FHS N')) %>%
+  rename('Position' = ch37) %>%
+  select(-Gene, -Chromosome) 
+
+hdac4 <- hdac4[!duplicated(hdac4[c('Position', 'Drug', 'Sample', 'Mayo Effect Estimate')]),]
+```
+```{r}
+# Save gene tables as csv
+# These are condensed tables with duplicates due to imputation collapsed into one
+# point. Mayo data has been filtered by p < 0.05 and FHS data only includes those
+# SNPs which were found in Mayo. For full data please see intermediate files
+# loaded in at the top of this script
+
+write.csv(adrb1, '//work/larylab/Griffin_Stuff/Griffin_Mayo/results/tables/adrb1_results_table.csv')
+write.csv(adrb2, '//work/larylab/Griffin_Stuff/Griffin_Mayo/results/tables/adrb2_results_table.csv')
+write.csv(hdac4, '//work/larylab/Griffin_Stuff/Griffin_Mayo/results/tables/hdac4_results_table.csv')
+```
+
+Create Flextables
+```{r}
+set_flextable_defaults(
+  font.size = 6, theme_fun = theme_vanilla,
+  padding = 1,
+  tabcolsep = 0,
+  line_spacing = .8,
+  text.align = 'center',
+  background.color = "#EFEFEF"
+)
+adrb1_flextable <- flextable(adrb1) %>%
+  add_header_row(values = c('Genotype', 'Mayo Results', 'FHS Results'), colwidths = c(5, 6, 4)) %>%
+  align(align = 'center', part = 'all', j = 3:8) %>%
+  merge_v(j = 1) %>% merge_v(j = 2) %>% merge_v(j = 3) %>% merge_v(j = 4) %>% merge_v(j = 5) %>%
+  merge_v(j = 6) %>% merge_v(j = 7) %>% merge_v(j = 12) %>%
+  set_caption(caption = 'ADRB1 Chromosome 10') %>%
+  theme_vanilla() %>%
+  set_table_properties(align = 'right', layout = 'autofit') %>%
+  border_outer() %>%
+  border_inner_v()
+
+adrb1_flextable
+```
+
+```{r}
+set_flextable_defaults(
+  font.size = 6, theme_fun = theme_vanilla,
+  padding = 1,
+  tabcolsep = 0,
+  line_spacing = .8,
+  text.align = 'center',
+  background.color = "#EFEFEF"
+)
+adrb2_flextable <- flextable(adrb2) %>%
+  add_header_row(values = c('Genotype', 'Mayo Results', 'FHS Results'), colwidths = c(5, 6, 4)) %>%
+  align(align = 'center', part = 'all', j = 3:8) %>%
+  merge_v(j = 1) %>% merge_v(j = 2) %>% merge_v(j = 3) %>% merge_v(j = 4) %>% merge_v(j = 5) %>%
+  merge_v(j = 6)  %>% merge_v(j = 12) %>%
+  set_caption(caption = 'ADRB2 Chromosome 5') %>%
+  theme_vanilla() %>%
+  set_table_properties(align = 'right', layout = 'autofit') %>%
+  border_outer() %>%
+  border_inner_v()
+
+adrb2_flextable
+```
+
+```{r}
+set_flextable_defaults(
+  font.size = 6, theme_fun = theme_vanilla,
+  padding = 1,
+  tabcolsep = 0,
+  line_spacing = .8,
+  text.align = 'center',
+  background.color = "#EFEFEF"
+)
+hdac4_flextable <- flextable(hdac4) %>%
+  add_header_row(values = c('Genotype', 'Mayo Results', 'FHS Results'), colwidths = c(5, 6, 4)) %>%
+  align(align = 'center', part = 'all', j = 3:8) %>%
+  merge_v(j = 1) %>% merge_v(j = 2) %>% merge_v(j = 3) %>% merge_v(j = 4) %>% merge_v(j = 5) %>%
+  merge_v(j = 6)  %>% merge_v(j = 12) %>%
+  set_caption(caption = 'HDAC4 Chromosome 2') %>%
+  theme_vanilla() %>%
+  set_table_properties(align = 'right', layout = 'autofit') %>%
+  border_outer() %>%
+  border_inner_v()
+
+hdac4_flextable
+```
+
+

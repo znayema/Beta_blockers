@@ -1,0 +1,247 @@
+---
+title: "Plot Mayo and Framingham"
+author: "Griffin Tibbitts"
+date: '2023-06-28'
+output: html_document
+---
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+library(scales)
+library(ggforce)
+library(ggstats)
+```
+
+```{r}
+# Mayo Results
+bmd <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/processedBMD.csv')
+lab <- read.csv('/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/processedLAB.csv')
+
+# Framingham Results
+
+long_fhs <- read.csv('/work/larylab/Griffin_Stuff/Griffin_Framingham/results/Long_FN_AllSNPs_LMER_results_female.csv') %>%
+  filter(var == 'round(gt_DS):BBYes')
+cs_fhs <- read.csv('/work/larylab/Griffin_Stuff/Griffin_Framingham/results/FULL_POWER_CS_FN_AllSNPs_LMER_results_female.csv') %>%
+  filter(var == 'round(gt_DS):BBYes')
+```
+
+```{r plot-wider, fig.width = 15, fig.height = 7}
+
+
+####################
+#edited by jls (9-27-23) because the renaming wasn't necessary. The columns already had those names.
+###########################################
+# Plot highlighted Mayo results
+bmd_all <- bmd %>% #rename(bmd, Sample = BMD_Site) %>%
+  #rbind(rename(lab, Sample = Lab)) %>%
+  rbind(lab) %>%
+  mutate(label = case_when(
+            p > 0.05 ~ "",
+            p > 0.01 ~ "*",
+            p > 0.001 ~ "**",
+            !is.na(p) ~ "***",
+            TRUE ~ NA_character_
+        )
+    ) %>%
+  filter(Sample == 'Femoral Neck' | Sample == 'Lumbar Spine' | Sample == 'Ultradistal Radius' | Sample == 'ctx') %>%
+  mutate(Value = case_when(Sample == 'ctx' ~ Value / 5,
+                           TRUE ~ Value),
+         Sample = case_when(Sample == 'ctx' ~ 'CTX',
+                            TRUE ~ Sample))
+
+head(bmd_all)
+
+p <- ggplot(bmd_all, aes(as.character(ch37), Value, fill = Drug)) +
+  geom_col(position = position_dodge(width = 1), alpha = 0.5, width = .5) +
+  scale_fill_manual(values = c('Atenolol' = 'orange', 'Nebivolol' = 'red', 'Propranolol40' = 'light green', 'Propranolol80' = 'dark green')) +
+  # Add significance asterisks
+  geom_text(aes(label = label, group = Drug), size = 3, position = position_dodge(width = 1))+
+  theme_light() +
+  # Adjust x axis labeling to be 90 degrees to avoid overlap
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  
+  # Set Scale so that it is consistent across all plots
+  scale_y_continuous(labels = label_percent(), limits = c(-0.045, 0.06)) + 
+  
+  
+  # Set Each Gene as a plot on the same scale
+  #facet_zoom(x = Gene == 'ADRB2') +
+  facet_grid(vars(Sample), vars(Gene), scales = "free", space = 'free', switch = 'both', shrink = T) +
+  
+  geom_stripped_cols()+
+  #scale_x_discrete(expand=c(0.2, 0)) +
+  
+  labs(title = 'Pharmacogenetic Effect of Alternate Allele Dose\nPlus BB Treatment in Mayo Pilot Trial by Bone Site and CTX',
+       x = 'SNP Position', 
+       y = "Effect Estimate Change in BMD from Baseline") 
+p
+```
+```{r}
+# Plot longitudinal FHS hits for Mayo SNPs
+all_long_fhs <- mutate(long_fhs,
+        label = case_when(
+            p > 0.05 ~ "",
+            p > 0.01 ~ "*",
+            p > 0.001 ~ "**",
+            !is.na(p) ~ "***",
+            TRUE ~ NA_character_
+        )
+    ) %>%
+  merge(distinct(dplyr::select(bmd, ch37)), by.x = 'POS', by.y = 'ch37', all.y = T) %>%
+   mutate(Gene = case_when(POS == 115806232 ~ 'ADRB1',
+                         POS == 240224444 ~ 'HDAC4',
+                         TRUE~Gene))
+
+head(all_long_fhs)
+
+p <- ggplot(all_long_fhs, aes(as.character(POS), Estimate)) +
+  geom_col(position = 'dodge', alpha = 0.3, linewidth = .1) +
+  geom_errorbar(aes(ymin=Estimate-Std..Error, ymax=Estimate+Std..Error), width=.2,
+                 position=position_dodge(.9)) +
+  # Add significance asterisks
+  geom_text(aes(label = label), size = 3, vjust = -1)+
+  
+  # Adjust x axis labeling to be 90 degrees to avoid overlap
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  
+  # Set Scale so that it is consistent across all plots
+  scale_y_continuous(labels = label_percent(), limits = c(-0.045, 0.06)) + 
+  
+  # Set Each Gene as a plot on the same scale
+  facet_grid(~Gene, scales = "free_x", space = 'free_x', switch = 'both') +
+  
+  labs(title = 'Longitudinal Framingham Pharmacogenetic Effect',
+       x = 'SNP Position', 
+       y = "Annualized % Change from Interaction Effect") 
+p
+```
+
+```{r}
+# Plot cross sectional FHS hits for Mayo SNPs
+all_cs_fhs <- mutate(cs_fhs,
+        label = case_when(
+            p > 0.05 ~ "",
+            p > 0.01 ~ "*",
+            p > 0.001 ~ "**",
+            !is.na(p) ~ "***",
+            TRUE ~ NA_character_
+        )
+    ) %>%
+  merge(distinct(dplyr::select(bmd, ch37)), by.x = 'POS', by.y = 'ch37', all.y = T) %>%
+ mutate(Gene = case_when(POS == 115806232 ~ 'ADRB1',
+                         POS == 240224444 ~ 'HDAC4',
+                         TRUE~Gene))
+
+all_cs_fhs
+
+p <- ggplot(all_cs_fhs, aes(as.character(POS), Estimate)) +
+  geom_col(position = 'dodge', alpha = 0.3, size = .1) +
+  geom_errorbar(aes(ymin=Estimate-Std..Error, ymax=Estimate+Std..Error), width=.2,
+                 position=position_dodge(.9)) +
+  # Add significance asterisks
+  geom_text(aes(label = label), size = 3, vjust = -5)+
+  
+  # Adjust x axis labeling to be 90 degrees to avoid overlap
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  
+  # Set Scale so that it is consistent across all plots
+  #scale_y_continuous(labels = label_percent()) + 
+  
+  # Set Each Gene as a plot on the same scale
+  facet_grid(~Gene, scales = "free_x", space = 'free_x', switch = 'both') +
+  
+  labs(title = 'Cross Sectional Framingham Pharmacogenetic Effect',
+       x = 'SNP Position', 
+       y = "BMD Difference from Interaction Effect") 
+p
+```
+```{r plot-wider, fig.width = 15, fig.height = 7}
+# Plot highlighted Mayo results
+#bmd_all <- #rename(lab, Sample = Lab) %>%
+  mutate(label = case_when(
+            p > 0.05 ~ "",
+            p > 0.01 ~ "*",
+            p > 0.001 ~ "**",
+            !is.na(p) ~ "***",
+            TRUE ~ NA_character_
+        )
+    ) #%>%
+  #filter(Sample != 'rankl') #%>%
+  # mutate(Value = case_when(Sample == 'ctx' ~ Value / 5,
+  #                          TRUE ~ Value),
+  #        Sample = case_when(Sample == 'ctx' ~ 'CTX',
+  #                           TRUE ~ Sample))
+
+head(bmd_all)
+p <- ggplot(bmd_all, aes(as.character(ch37), Value, fill = Drug)) +
+  geom_col(position = position_dodge(width = 1), alpha = 0.5, width = .5) +
+  scale_fill_manual(values = c('Atenolol' = 'orange', 'Nebivolol' = 'red', 'Propranolol40' = 'light green', 'Propranolol80' = 'dark green')) +
+  # Add significance asterisks
+  geom_text(aes(label = label, group = Drug), size = 3, position = position_dodge(width = 1))+
+  theme_light() +
+  # Adjust x axis labeling to be 90 degrees to avoid overlap
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  
+  # Set Scale so that it is consistent across all plots
+  scale_y_continuous(labels = label_percent(), limits = c(-.30, .30)) + 
+  
+  
+  # Set Each Gene as a plot on the same scale
+  #facet_zoom(x = Gene == 'ADRB2') +
+  facet_grid(vars(Sample), vars(Gene), scales = "free", space = 'free', switch = 'both', shrink = T) +
+  
+  geom_stripped_cols()+
+  #scale_x_discrete(expand=c(0.2, 0)) +
+  
+  labs(title = 'Pharmacogenetic Effect of Alternate Allele Dose\nPlus BB Treatment in Mayo Pilot Trial by Bone Site and CTX',
+       x = 'SNP Position', 
+       y = "Effect Estimate Change in BMD from Baseline") 
+p
+
+bmd_all <- rename(lab, Sample = Lab) %>%
+  mutate(label = case_when(
+            p > 0.05 ~ "",
+            p > 0.01 ~ "*",
+            p > 0.001 ~ "**",
+            !is.na(p) ~ "***",
+            TRUE ~ NA_character_
+        )
+    ) %>%
+  filter(Sample == 'rankl') #%>%
+  # mutate(Value = case_when(Sample == 'ctx' ~ Value / 5,
+  #                          TRUE ~ Value),
+  #        Sample = case_when(Sample == 'ctx' ~ 'CTX',
+  #                           TRUE ~ Sample))
+
+head(bmd_all)
+rankl <- ggplot(bmd_all, aes(as.character(ch37), Value, fill = Drug)) +
+  geom_col(position = position_dodge(width = 1), alpha = 0.5, width = .5) +
+  scale_fill_manual(values = c('Atenolol' = 'orange', 'Nebivolol' = 'red', 'Propranolol40' = 'light green', 'Propranolol80' = 'dark green')) +
+  # Add significance asterisks
+  geom_text(aes(label = label, group = Drug), size = 3, position = position_dodge(width = 1))+
+  theme_light() +
+  # Adjust x axis labeling to be 90 degrees to avoid overlap
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  
+  # Set Scale so that it is consistent across all plots
+  scale_y_continuous(labels = label_percent()) + 
+  
+  
+  # Set Each Gene as a plot on the same scale
+  #facet_zoom(x = Gene == 'ADRB2') +
+  facet_grid(vars(Sample), vars(Gene), scales = "free", space = 'free', switch = 'both', shrink = T) +
+  
+  geom_stripped_cols()+
+  #scale_x_discrete(expand=c(0.2, 0)) +
+  
+  labs(title = 'Pharmacogenetic Effect of Alternate Allele Dose\nPlus BB Treatment in Mayo Pilot Trial by Bone Site and CTX',
+       x = 'SNP Position', 
+       y = "Effect Estimate Change in BMD from Baseline") 
+rankl
+```
+

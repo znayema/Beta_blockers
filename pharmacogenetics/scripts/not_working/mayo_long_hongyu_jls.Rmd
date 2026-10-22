@@ -1,0 +1,223 @@
+---
+title: "Untitled"
+author: "Hongyu Chen"
+date: '2023-04-14'
+output: html_document
+---
+
+```{r}
+rm(list=ls())
+library(Hmisc)
+library(gplots)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(edgeR)
+library(MASS)
+library(lme4)
+```
+
+
+```{r}
+data = read.delim(file="/work/larylab/Mayo/data/mature_miRNA_expression.txt",stringsAsFactors = F)
+#themiRNA = data$Mature.miRNA
+#themiRNA = substring(themiRNA,nchar(themiRNA)-3,nchar(themiRNA))
+#table(themiRNA)
+head(data)
+```
+```{r}
+genes = data[,1] # genes names in original data frame "data"
+key = read.delim(file="/work/larylab/Mayo/data/Copy of Lary Study - Key.txt",stringsAsFactors = F)
+# add additional columns to key
+key$ID = sort(rep(1:24,2))
+head(key)
+```
+```{r}
+key$time = ifelse(key$Timepoint=="Baseline",1,2)
+sampID = names(data)[2:ncol(data)]
+sampID = as.numeric(gsub("DM","",sampID))
+# order data columns to be the same as key
+data = data[,c(1,order(sampID)+1)] # data columns now in same order as key
+# now we will order by trt
+trt_order = order(key$treatment)
+key = key[trt_order,]
+data = data[,c(1,trt_order+1)]
+cbind(key$X,names(data)[2:ncol(data)]) # double check key and data still in same order
+# set up three data sets: baseline, endpoint, and delta
+b = key$X[key$Timepoint=="Baseline"]
+e = key$X[key$Timepoint=="Endpoint"]
+t = key$treatment[key$Timepoint=="Baseline"] # this works for all 3 data sets; data contains baseline then endpoint for each sample
+id = key$ID[key$Timepoint=="Baseline"]
+newnames = paste(t,id,sep="_")
+baseline = data %>% 
+  dplyr::select(all_of(b))
+endpoint = data %>% 
+  dplyr::select(all_of(e))
+#delta = endpoint - baseline
+outdf = NULL
+analysis = c("Baseline HR vs LR","Endpoint HR vs LR","Endpoint Atenolol vs Placebo")
+```
+
+```{r}
+for (l in 1:3) {
+  if (l == 1) {
+    thedata = baseline
+  } else {
+    thedata = endpoint
+  }
+  names(thedata) = newnames
+  # next load into edgeR
+  counts = thedata
+  rownames(counts) = genes
+  group = t#[theorder]
+  group2 = ifelse(group=="Placebo","Placebo","Atenolol")
+  if (l<3) {
+    cds <- DGEList( counts , group = group )
+  } else {
+    cds <- DGEList( counts , group = group2 )
+  }
+  # change from 10 to one for expression filter - back to default - 12/7/2021
+  # one read per million in at least 3 samples or 1 RPKM
+  cds <- cds[rowSums(1e+06 * cds$counts/expandAsMatrix(cds$samples$lib.size, dim(cds)) > 1) >= 3, ]
+  cds <- calcNormFactors( cds )
+  if (l==1) write.csv(file="baseline.csv",cds$samples)
+  if (l==2) write.csv(file="endpoint.csv",cds$samples)
+  cds <- estimateCommonDisp( cds )
+  cds <- estimateTagwiseDisp( cds )
+  if (l < 3) {
+    if (l==1) name = "baseline" else name = "endpoint"
+  }
+  if (l < 3) {
+    de1.cmn <- exactTest( cds , dispersion="common", pair = c( "Atenolol (low responder)", "Atenolol (high responder)" ) )
+  } else {
+    de1.cmn <- exactTest( cds , dispersion="common", pair = c( "Placebo" , "Atenolol" ) )
+  }
+  options( digits = 3 ) # print only 3 digits
+  # Store full topTags results table
+  resultsTbl.cmn <- topTags( de1.cmn , n = nrow( de1.cmn$table ) )$table
+  de1.genes.cmn <- rownames( resultsTbl.cmn )[ resultsTbl.cmn$PValue <= 0.05 ]
+  colnames( resultsTbl.cmn ) <- c( "logFC" , "logCPM", "pVal.Cmn","adj.pVal.Cmn")
+  # Below provides the info to re-order the count matrix to be in line with the order of the results
+  wh.rows.cmn <- match( rownames( resultsTbl.cmn ) , rownames( cds$counts ) )
+  # Common Results
+  combResults.cmn <- cbind( resultsTbl.cmn ,
+                          "Cmn.Disp" = cds$common.dispersion ,
+                          "UpDown.Cmn" = decideTestsDGE( de1.cmn , p.value = 0.05, adjust.method = "none" )[ wh.rows.cmn,1 ] ,
+                          cds$counts[ wh.rows.cmn , ] )
+  normcounts = combResults.cmn[,7:ncol(combResults.cmn)]*cds$samples$norm.factors
+  if (l==1) {
+    normcounts_b = normcounts
+  } else {
+    if (l==2) {
+      normcounts_e = normcounts
+    }
+  }
+  names(normcounts) = paste("norm","_",names(normcounts),sep="")
+  combResults.all <- cbind( row.names(combResults.cmn),
+                            rep(analysis[l],nrow(combResults.cmn)),
+                            combResults.cmn[,1:4],
+                          "Cmn.Disp" = combResults.cmn[,5],
+                          "UpDown.Cmn" = combResults.cmn[,6],
+                          combResults.cmn[,7:ncol(combResults.cmn)],
+                          normcounts)
+  names(combResults.all)[1:2] = c("miRNA","Analysis")
+  outdf = rbind(outdf,combResults.all)
+}
+```
+
+```{r}
+outdf
+```
+```{r}
+write.csv(outdf,"/work/larylab/Jennifer/beta_blockers/pharmacogenomics/results/long_mirna_cmn.csv",row.names=F)
+outsig = outdf[outdf$adj.pVal.Cmn<0.5,]
+write.csv(outdf[outdf$adj.pVal.Cmn<0.5,],"/work/larylab/Jennifer/beta_blockers/pharmacogenomics/results/mirna_cmn_sig.csv",row.names=F)
+```
+
+```{r}
+# perform longitudinal analysis
+b = normcounts_b
+b$miRNA = row.names(b)
+e = normcounts_e
+e$miRNA = row.names(e)
+merged = merge(b,e,by="miRNA",all.x=F,all.y=F)
+merged
+```
+```{r}
+library("lmerTest")
+require(lme4)
+```
+```{r}
+ncol = ncol(merged)
+ncol
+id
+```
+```{r}
+trt = c(t,t)
+trt = factor(trt,levels = c("Placebo","Atenolol (low responder)","Atenolol (high responder)"))
+trt2 = ifelse(trt=="Placebo","Placebo","Atenolol")
+trt2 = factor(trt2,levels=c("Placebo","Atenolol"))
+id = c(id,id)
+id = factor(id)
+time = c(rep(1,24),rep(2,24))
+# check design matrix
+cbind(names(merged)[2:ncol(merged)],id,trt,time) # check
+# model each miRNA
+results = list()
+sum = array(0,dim=c(nrow(merged))) # was 371, now 632
+i = 1 # 19a-3p
+
+
+```
+```{r}
+#for (i in 1:2) { 
+  i= 2
+  y = round(as.numeric(merged[i,2:ncol]))
+  dat = data.frame(y,trt,trt2,time,id)
+  # estimate the model
+  # set.seed(i)
+  # change to trt2
+  # mod1 <- glm.nb(y ~ trt2*time,data=dat)
+  set.seed(i*i+1)
+  tryCatch({
+    print(i)
+    mod <- lmer(log(y) ~ trt*time + (1|id), data=dat, verbose=F)
+    results[[i]] = summary(mod)[[10]]
+    print(i)
+  }, error=function(e){})
+  set.seed(i*i*i+1)
+  tryCatch({
+    print(i)
+    mod <- lmer(log(y) ~ trt2*time + (1|id), data=dat, verbose=F)
+    results[[i+nrow(merged)]] = summary(mod)[[10]]
+    print(i)
+  }, error=function(e){})
+#}
+```
+
+
+```{r}
+# parse results
+bigdf = NULL
+for (i in 1:length(results)) {
+  if (length(results[[i]])>0) {
+    if (i<=nrow(merged)) miRNA = merged[i,]$miRNA else miRNA = merged[i-nrow(merged),]$miRNA
+    df = data.frame(miRNA,row.names(results[[i]]),results[[i]])
+
+    row.names(df) = NULL
+    bigdf = rbind(bigdf,df)
+  }
+}
+```
+```{r}
+bigdf$miRNA
+```
+```{r}
+bigdf$p.z <- 2 * (1 - pnorm(abs(bigdf$t.value)))
+bigdf
+
+```
+```{r}
+write.csv(bigdf,"mirna_long.csv",row.names=F)
+```
+

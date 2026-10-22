@@ -1,0 +1,86 @@
+---
+title: "clean_lab.Rmd"
+author: "Griffin Tibbitts"
+date: '2023-04-07'
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+setwd("/work/larylab/Jennifer/beta_blockers/")
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+library(tidyr)
+```
+
+```{r}
+# Load in lab file
+lab = read.csv(file="/work/larylab/Mayo/data/HDAC_lab_fit5.csv",stringsAsFactors = F)
+ilab = read.csv(file="/work/larylab/Mayo/data/imp_lab_fit5.csv",stringsAsFactors = F)
+lookup = read.csv('/work/larylab/Griffin_Stuff/Griffin_Mayo/data/mayo_fram_snp_master_list.csv') %>%
+  separate(ch38, c('Chromosome', 'ch38')) %>%
+  mutate(Chromosome = as.numeric(substring(Chromosome, 4)))
+```
+
+```{r}
+# Clean and assign human readable values to data from HDAC_dxa_fit5.csv 
+cleaned_lab <- lab %>%
+  
+  # Deal with GSA label
+  mutate(snp = case_when(startsWith(snp, 'GSA') ~ gsub('GSA.', '', snp),
+                         TRUE ~ snp)) %>%
+  
+  # Split snp into rsid and effect allele columns
+  separate(snp, c('rsid', 'EA')) %>%
+
+  
+  # Rename BMD Sites to be more descriptive
+  rename(Sample = lab_var) %>%
+  mutate(
+         # Non-effect allele is not listed here so rather than assuming leave it
+         # as NA
+         NEA = NA,
+         Source = 'lab') %>%
+  
+  # Merge with lookup file to get positions
+  merge(lookup, by = 'rsid', all = T) %>%
+  filter(!is.na(Sample)) %>%
+  distinct() %>%
+  dplyr::select(-written.allele, -A1, -A2, -rsid.allele, -ch38.reference.allele, -ch38.alternate.allele, -X, -dxa_var) %>%
+  
+  mutate(Chromosome = as.numeric(gsub('chr', '', Chromosome)))
+
+cleaned_lab
+```
+
+```{r}
+# Imputed Lab Data
+cleaned_imp <- ilab %>%
+  
+    # Rename column names to be more human readable
+    rename(Sample = 'lab_var') %>%
+    
+    # Separate snp naming convention into separate columns. Discards trailing EA
+    separate(snp, c('Chromosome','ch38', 'EA', 'NEA')) %>%
+    
+    # Remove 'chr' from chromosome to match non-imputed and to be integer
+    mutate(Chromosome = as.numeric(gsub('chr', '', Chromosome))) %>%
+  
+    # Merge with lookup file to get ch37 position and rsid
+    merge(lookup, by = c('ch38', 'Chromosome'), all = T) %>%
+    filter(!is.na(Sample)) %>%
+    distinct() %>%
+    dplyr::select(-written.allele, -rsid.allele, -A1, -A2, -ch38.reference.allele, -ch38.alternate.allele, -X, -dxa_var) %>%
+    mutate(Source = 'imputed lab')
+  
+cleaned_imp
+```
+
+```{r}
+write.csv(cleaned_lab,'/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/cleaned_lab.csv')
+write.csv(cleaned_imp,'/work/larylab/Jennifer/beta_blockers/pharmacogenomics/data/cleaned_imputed_lab.csv')
+```
+
